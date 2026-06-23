@@ -55,7 +55,7 @@
       </div>
     </a>
 
-    <!-- FIX: llamaba Auth.logout() que no existía; ahora usa logout() global de api.js -->
+    
     <button class="btn btn-quiet" style="width:100%; margin-top:12px;" onclick="logout()">
       Cerrar sesión
     </button>
@@ -136,14 +136,14 @@
   }
 
   function notifHTML(n){
-    // FIX: el serializador devuelve sender_name / sender_username (no n.sender objeto)
+    
     const senderName = n.sender_name || n.sender?.first_name || "Alguien";
     const type = (n.notification_type || "").toLowerCase();
 
     const verb = VERB[type] || "interactuó contigo";
     const icon = ICONS[type] || ICONS.follow;
 
-    // FIX: is_read no estaba en los campos del serializador → siempre aparecía como leído
+    
     return `
       <div class="notif-item ${n.is_read ? "" : "is-unread"}">
         <div class="notif-icon">${icon}</div>
