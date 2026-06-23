@@ -1,0 +1,394 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feed — Pulse</title>
+<link rel="stylesheet" href="{% static 'css/main.css' %}">
+</head>
+
+<body>
+
+<div class="app-shell">
+
+  <!-- ===== Nav lateral ===== -->
+  <nav class="col-nav">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div class="brand-name">Pulse</div>
+    </div>
+
+    <ul class="nav-list">
+      <li>
+        <a href="{% url 'feed' %}" class="nav-item is-active">Inicio</a>
+      </li>
+      <li>
+        <a href="{% url 'profile' %}" class="nav-item">Mi perfil</a>
+      </li>
+      <li>
+        <a href="{% url 'notifications' %}" class="nav-item">
+          Notificaciones
+          <span class="nav-badge" id="notifBadge" style="display:none">0</span>
+        </a>
+      </li>
+    </ul>
+
+    <button class="nav-compose" id="openComposer">Publicar</button>
+
+    <a href="{% url 'profile' %}" style="display:block; text-decoration:none; color:inherit;">
+      <div class="nav-account" data-current-user>
+        <div class="avatar avatar-placeholder" style="width:36px;height:36px;font-size:14px;">··</div>
+        <div>
+          <div class="nav-account-name">Cargando…</div>
+          <div class="nav-account-role">&nbsp;</div>
+        </div>
+      </div>
+    </a>
+
+    <button class="btn btn-quiet" style="width:100%; margin-top:12px;" onclick="logout()">
+      Cerrar sesión
+    </button>
+  </nav>
+
+  <!-- ===== Feed central ===== -->
+  <main>
+    <div class="feed-header">
+      <div class="feed-eyebrow">Lo último del equipo</div>
+      <h1 class="feed-title">Tu feed</h1>
+    </div>
+
+    <form class="composer" id="composerForm">
+      <div data-composer-avatar></div>
+      <div class="composer-body">
+        <textarea id="postContent" maxlength="3000"
+          placeholder="¿Qué está pasando en tu equipo hoy?"></textarea>
+        <div class="composer-footer">
+          <div class="composer-tools">
+            <label class="icon-btn">
+              <input type="file" id="postImage" accept="image/*" hidden>
+              📷
+            </label>
+            <span id="imageFileName"></span>
+          </div>
+          <button type="submit" class="btn btn-primary" id="postSubmit" disabled>
+            Publicar
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <div id="postsList"></div>
+  </main>
+
+  <!-- ===== Sidebar derecha ===== -->
+  <aside class="col-side">
+    <div class="widget">
+      <h3 class="widget-title">Gente para seguir</h3>
+      <div id="suggestionsList"></div>
+    </div>
+  </aside>
+
+</div>
+
+<script src="{% static 'js/api.js' %}"></script>
+
+<script>
+  Auth.requireLogin();
+
+  let CURRENT_USER = null;
+
+  async function bootApp() {
+    if (!Auth.getAccess() && Auth.getRefresh()) {
+      await tryRefreshToken();
+    }
+  }
+
+  (async function init() {
+    await bootApp();
+    CURRENT_USER = await loadCurrentUserIntoNav();
+
+    const composerAvatar = document.querySelector("[data-composer-avatar]");
+    if (composerAvatar && CURRENT_USER) {
+      composerAvatar.innerHTML = avatarHTML(CURRENT_USER, 40);
+    }
+
+    loadFeed();
+    loadSuggestions();
+    loadUnreadBadge();
+  })();
+
+  /* ===== Composer ===== */
+  const textarea = document.getElementById("postContent");
+  const btn      = document.getElementById("postSubmit");
+  const img      = document.getElementById("postImage");
+  const fileName = document.getElementById("imageFileName");
+
+  textarea.addEventListener("input", () => {
+    btn.disabled = textarea.value.trim().length === 0;
+  });
+
+  img.addEventListener("change", () => {
+    fileName.textContent = img.files[0]?.name || "";
+  });
+
+  document.getElementById("composerForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    btn.textContent = "Publicando…";
+
+    const formData = new FormData();
+    formData.append("content", textarea.value.trim());
+    if (img.files[0]) formData.append("image", img.files[0]);
+
+    const res = await apiFetch("/posts/", { method: "POST", body: formData });
+    btn.textContent = "Publicar";
+
+    if (res.ok){
+      textarea.value = "";
+      img.value = "";
+      fileName.textContent = "";
+      btn.disabled = true;
+      loadFeed();
+    } else {
+      showToast("No se pudo publicar. Inténtalo de nuevo.");
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("openComposer").addEventListener("click", () => {
+    textarea.focus();
+  });
+
+  /* ===== Feed ===== */
+  async function loadFeed(){
+    const listEl = document.getElementById("postsList");
+    listEl.innerHTML = `<div class="empty-state">Cargando…</div>`;
+
+    try {
+      const res = await apiFetch("/posts/feed/");
+      if (!res.ok){
+        listEl.innerHTML = `<div class="empty-state">No se pudo cargar el feed.</div>`;
+        return;
+      }
+      const data  = await res.json();
+      const posts = data.results || data;
+
+      if (!posts.length){
+        listEl.innerHTML = `<div class="empty-state">
+          <div class="empty-state-title">Nada por aquí todavía</div>
+          <div>Sigue a compañeros para ver sus publicaciones.</div>
+        </div>`;
+        return;
+      }
+
+      listEl.innerHTML = posts.map(postHTML).join("");
+    } catch(err) {
+      listEl.innerHTML = `<div class="empty-state">Sin conexión con el servidor.</div>`;
+    }
+  }
+
+  /* ===== Post HTML ===== */
+  function postHTML(p) {
+    const author = p.author || {};
+    const isOwn  = CURRENT_USER && author.username === CURRENT_USER.username;
+
+    return `
+      <article class="post-card" data-post-id="${p.id}">
+        <a href="/profile/?username=${encodeURIComponent(author.username)}"
+           style="text-decoration:none;color:inherit;">
+          ${avatarHTML(author, 40)}
+        </a>
+        <div class="post-main">
+          <div class="post-head">
+            <div>
+              <b>${escapeHTML(author.first_name || "")} ${escapeHTML(author.last_name || "")}</b>
+              <span class="post-username">@${escapeHTML(author.username || "")}</span>
+            </div>
+            <span class="post-time">${timeAgo(p.created_at)}</span>
+          </div>
+
+          <div class="post-content">${escapeHTML(p.content)}</div>
+
+          ${p.image ? `<img src="${p.image}" class="post-image" alt="imagen del post">` : ""}
+
+          <div class="post-actions">
+            <button class="like-btn ${p.is_liked ? 'is-liked' : ''}"
+              onclick="toggleLike(${p.id}, this)">
+              ❤ <span class="like-count">${p.likes_count ?? 0}</span>
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleComments(${p.id})">
+              💬 <span id="cc-${p.id}">${p.comments_count ?? 0}</span>
+            </button>
+            ${isOwn ? `<button class="btn btn-ghost btn-sm" onclick="deletePost(${p.id})">Eliminar</button>` : ""}
+          </div>
+
+          <!-- Sección de comentarios (oculta por defecto) -->
+          <div id="comments-${p.id}" style="display:none; margin-top:12px;">
+            <div id="comments-list-${p.id}" style="margin-bottom:8px;"></div>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="comment-input-${p.id}"
+                placeholder="Escribe un comentario…"
+                style="flex:1; padding:7px 10px; border:1px solid var(--border,#ddd);
+                       border-radius:8px; font-size:13px;"
+                onkeydown="if(event.key==='Enter') submitComment(${p.id})">
+              <button class="btn btn-primary btn-sm" onclick="submitComment(${p.id})">Enviar</button>
+            </div>
+          </div>
+
+        </div>
+      </article>
+    `;
+  }
+
+  /* ===== Likes ===== */
+  async function toggleLike(postId, btn) {
+    btn.disabled = true;
+    try {
+      const res = await apiFetch(`/posts/${postId}/like/`, { method: "POST" });
+      if (!res.ok) return;
+      const data = await res.json();
+      btn.classList.toggle("is-liked", data.liked);
+      btn.querySelector(".like-count").textContent = data.likes_count;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* ===== Eliminar post ===== */
+  async function deletePost(postId) {
+    if (!confirm("¿Eliminar esta publicación?")) return;
+    const res = await apiFetch(`/posts/${postId}/`, { method: "DELETE" });
+    if (res.ok || res.status === 204) loadFeed();
+    else showToast("No se pudo eliminar el post.");
+  }
+
+  /* ===== Comentarios ===== */
+  async function toggleComments(postId){
+    const section = document.getElementById(`comments-${postId}`);
+    if (section.style.display === "none"){
+      section.style.display = "block";
+      await loadComments(postId);
+    } else {
+      section.style.display = "none";
+    }
+  }
+
+  async function loadComments(postId){
+    const listEl = document.getElementById(`comments-list-${postId}`);
+    listEl.innerHTML = `<div style="font-size:13px;color:var(--muted)">Cargando…</div>`;
+    try {
+      const res = await apiFetch(`/posts/${postId}/comments/`);
+      if (!res.ok){ listEl.innerHTML = ""; return; }
+      const data     = await res.json();
+      const comments = data.results || data;
+
+      if (!comments.length){
+        listEl.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:6px;">
+          Sin comentarios aún.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = comments.map(c => `
+        <div style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;">
+          ${avatarHTML(c.author, 28)}
+          <div style="background:var(--surface-alt,#f5f5f5); border-radius:8px;
+                      padding:6px 10px; flex:1;">
+            <span style="font-weight:600; font-size:12px;">
+              ${escapeHTML(c.author?.first_name || "")} ${escapeHTML(c.author?.last_name || "")}
+            </span>
+            <span style="font-size:12px; color:var(--muted); margin-left:4px;">
+              · ${timeAgo(c.created_at)}
+            </span>
+            <div style="font-size:13px; margin-top:2px;">${escapeHTML(c.content)}</div>
+          </div>
+        </div>
+      `).join("");
+    } catch(e){
+      listEl.innerHTML = "";
+    }
+  }
+
+  async function submitComment(postId){
+    const input   = document.getElementById(`comment-input-${postId}`);
+    const content = input.value.trim();
+    if (!content) return;
+
+    input.disabled = true;
+    try {
+      const res = await apiFetch(`/posts/${postId}/comments/`, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      });
+      if (res.ok){
+        input.value = "";
+        await loadComments(postId);
+        const cc = document.getElementById(`cc-${postId}`);
+        if (cc) cc.textContent = parseInt(cc.textContent || "0") + 1;
+      } else {
+        showToast("No se pudo enviar el comentario.");
+      }
+    } catch(e){
+      showToast("Error de conexión.");
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+  }
+
+  /* ===== Sugerencias ===== */
+  async function loadSuggestions() {
+    const el = document.getElementById("suggestionsList");
+    try {
+      const res = await apiFetch("/users/");
+      if (!res.ok) return;
+      const data  = await res.json();
+      const users = (data.results || data).slice(0, 5);
+
+      el.innerHTML = users.map(u => `
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+          <a href="/profile/?username=${encodeURIComponent(u.username)}"
+             style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:8px; flex:1;">
+            ${avatarHTML(u, 36)}
+            <div>
+              <div style="font-weight:600; font-size:14px;">
+                ${escapeHTML(u.first_name || u.username)}
+              </div>
+              <div style="font-size:12px; color:var(--muted)">@${escapeHTML(u.username)}</div>
+            </div>
+          </a>
+          <button class="btn btn-ghost btn-sm"
+            onclick="followFromSidebar('${u.username}', this)">${u.is_following ? "Siguiendo" : "Seguir"}</button>
+        </div>
+      `).join("");
+    } catch(err) {}
+  }
+
+  async function followFromSidebar(username, btn) {
+    btn.disabled = true;
+    const res = await apiFetch(`/users/${username}/follow/`, { method: "POST" });
+    if (res.ok){
+      const data = await res.json();
+      btn.textContent = data.following ? "Siguiendo" : "Seguir";
+    }
+    btn.disabled = false;
+  }
+
+  /* ===== Badge notificaciones ===== */
+  async function loadUnreadBadge() {
+    try {
+      const res = await apiFetch("/notifications/");
+      if (!res.ok) return;
+      const data   = await res.json();
+      const unread = (data.results || data).filter(n => !n.is_read).length;
+      const badge  = document.getElementById("notifBadge");
+      if (unread > 0){
+        badge.textContent = unread > 9 ? "9+" : unread;
+        badge.style.display = "inline-block";
+      }
+    } catch(err) {}
+  }
+</script>
+
+</body>
+</html>

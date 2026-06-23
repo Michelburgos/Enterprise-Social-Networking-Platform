@@ -1,0 +1,359 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Perfil — Pulse</title>
+<link rel="stylesheet" href="{% static 'css/main.css' %}">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ===== Nav lateral ===== -->
+  <nav class="col-nav">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div class="brand-name">Pulse</div>
+    </div>
+
+    <ul class="nav-list">
+      <li><a href="{% url 'feed' %}" class="nav-item">Inicio</a></li>
+      <li><a href="{% url 'profile' %}" class="nav-item is-active">Mi perfil</a></li>
+      <li>
+        <a href="{% url 'notifications' %}" class="nav-item">
+          Notificaciones
+          <span class="nav-badge" id="notifBadge" style="display:none">0</span>
+        </a>
+      </li>
+    </ul>
+
+    <button class="nav-compose" onclick="window.location.href='{% url 'feed' %}'">
+      Publicar
+    </button>
+
+    <a href="{% url 'profile' %}" style="display:block; text-decoration:none; color:inherit;">
+      <div class="nav-account" data-current-user>
+        <div class="avatar avatar-placeholder" style="width:36px;height:36px;font-size:14px;">··</div>
+        <div>
+          <div class="nav-account-name">Cargando…</div>
+          <div class="nav-account-role">&nbsp;</div>
+        </div>
+      </div>
+    </a>
+
+    <button class="btn btn-quiet" style="width:100%; margin-top:12px;" onclick="logout()">
+      Cerrar sesión
+    </button>
+  </nav>
+
+  <!-- ===== Perfil central ===== -->
+  <main>
+
+    <div id="profileRoot">
+      <div class="profile-card">
+        <div class="profile-cover"></div>
+        <div class="profile-body">
+          <div class="skeleton" style="width:84px;height:84px;border-radius:50%;"></div>
+          <div class="skeleton" style="width:160px;height:20px;margin-top:10px;"></div>
+          <div class="skeleton" style="width:220px;height:14px;margin-top:6px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-row">
+      <div class="tab is-active">Publicaciones</div>
+    </div>
+
+    <div id="profilePosts"></div>
+
+  </main>
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="col-side">
+    <div class="widget" id="statsWidget" style="display:none">
+      <h3 class="widget-title">En cifras</h3>
+      <div id="statsContent"></div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Modal editar perfil -->
+<div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+  align-items:center; justify-content:center; z-index:1000;">
+  <div style="background:var(--surface,#fff); border-radius:12px; padding:28px;
+    width:100%; max-width:420px; box-shadow:0 8px 32px rgba(0,0,0,.2);">
+    <h2 style="margin:0 0 20px; font-size:18px;">Editar perfil</h2>
+
+    <label style="display:block; margin-bottom:12px;">
+      <span style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">Nombre</span>
+      <input id="edit_first_name" type="text"
+        style="width:100%; padding:8px 10px; border:1px solid var(--border,#ddd);
+        border-radius:8px; font-size:14px; box-sizing:border-box;">
+    </label>
+
+    <label style="display:block; margin-bottom:12px;">
+      <span style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">Apellido</span>
+      <input id="edit_last_name" type="text"
+        style="width:100%; padding:8px 10px; border:1px solid var(--border,#ddd);
+        border-radius:8px; font-size:14px; box-sizing:border-box;">
+    </label>
+
+    <label style="display:block; margin-bottom:12px;">
+      <span style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">Biografía</span>
+      <textarea id="edit_bio" rows="3"
+        style="width:100%; padding:8px 10px; border:1px solid var(--border,#ddd);
+        border-radius:8px; font-size:14px; box-sizing:border-box; resize:vertical;"></textarea>
+    </label>
+
+    <label style="display:block; margin-bottom:12px;">
+      <span style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">Departamento</span>
+      <input id="edit_department" type="text"
+        style="width:100%; padding:8px 10px; border:1px solid var(--border,#ddd);
+        border-radius:8px; font-size:14px; box-sizing:border-box;">
+    </label>
+
+    <label style="display:block; margin-bottom:20px;">
+      <span style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">Cargo</span>
+      <input id="edit_position" type="text"
+        style="width:100%; padding:8px 10px; border:1px solid var(--border,#ddd);
+        border-radius:8px; font-size:14px; box-sizing:border-box;">
+    </label>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeEditModal()" class="btn btn-ghost">Cancelar</button>
+      <button onclick="saveProfile()" class="btn btn-primary" id="saveProfileBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script src="{% static 'js/api.js' %}"></script>
+
+<script>
+Auth.requireLogin();
+
+const params = new URLSearchParams(window.location.search);
+const targetUsername = params.get("username");
+
+let CURRENT_USER = null;
+let PROFILE_USER = null;
+
+/* ================= INIT ================= */
+(async function init(){
+  CURRENT_USER = await loadCurrentUserIntoNav();
+  await loadProfile();
+  await loadProfilePosts();
+  loadUnreadBadge();
+})();
+
+/* ================= PROFILE ================= */
+async function loadProfile(){
+  const root = document.getElementById("profileRoot");
+  try {
+    const url = targetUsername ? `/users/${targetUsername}/` : `/users/me/`;
+    const res = await apiFetch(url);
+    if (!res.ok){ root.innerHTML = emptyState("No encontramos este perfil"); return; }
+    PROFILE_USER = await res.json();
+    renderProfile(PROFILE_USER);
+  } catch(err){
+    root.innerHTML = emptyState("No se pudo cargar el perfil");
+  }
+}
+
+function renderProfile(user){
+  const isOwn = !targetUsername || (CURRENT_USER && user.username === CURRENT_USER.username);
+
+  const tags = [user.department, user.position]
+    .filter(Boolean)
+    .map(t => `<span class="profile-tag">${escapeHTML(t)}</span>`)
+    .join("");
+
+  const followBtn = isOwn
+    ? `<button class="btn btn-ghost" onclick="openEditModal()">Editar perfil</button>`
+    : `<button class="follow-btn" id="followBtn">
+        ${user.is_following ? "Siguiendo" : "Seguir"}
+      </button>`;
+
+  document.getElementById("profileRoot").innerHTML = `
+    <div class="profile-card">
+      <div class="profile-cover"></div>
+      <div class="profile-body">
+        <div class="profile-top">
+          ${avatarHTML(user, 84)}
+          ${followBtn}
+        </div>
+        <div class="profile-name">
+          ${escapeHTML(user.first_name || "")} ${escapeHTML(user.last_name || "")}
+        </div>
+        <div class="profile-meta">@${escapeHTML(user.username)}</div>
+        ${user.bio ? `<p class="profile-bio">${escapeHTML(user.bio)}</p>` : ""}
+        ${tags ? `<div class="profile-tags">${tags}</div>` : ""}
+        <div class="profile-stats">
+          <div>${user.followers_count ?? 0} seguidores</div>
+          <div>${user.following_count ?? 0} siguiendo</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (!isOwn){
+    document.getElementById("followBtn")
+      .addEventListener("click", () => toggleFollow(user.username));
+  }
+
+  document.getElementById("statsWidget").style.display = "block";
+  document.getElementById("statsContent").innerHTML = `
+    <div>Seguidores: ${user.followers_count ?? 0}</div>
+    <div>Siguiendo: ${user.following_count ?? 0}</div>
+  `;
+}
+
+/* ================= EDIT MODAL ================= */
+function openEditModal(){
+  if (!PROFILE_USER) return;
+  document.getElementById("edit_first_name").value  = PROFILE_USER.first_name  || "";
+  document.getElementById("edit_last_name").value   = PROFILE_USER.last_name   || "";
+  document.getElementById("edit_bio").value         = PROFILE_USER.bio         || "";
+  document.getElementById("edit_department").value  = PROFILE_USER.department  || "";
+  document.getElementById("edit_position").value    = PROFILE_USER.position    || "";
+  document.getElementById("editModal").style.display = "flex";
+}
+
+function closeEditModal(){
+  document.getElementById("editModal").style.display = "none";
+}
+
+// Cerrar modal al hacer click fuera
+document.getElementById("editModal").addEventListener("click", function(e){
+  if (e.target === this) closeEditModal();
+});
+
+async function saveProfile(){
+  const btn = document.getElementById("saveProfileBtn");
+  btn.disabled = true;
+  btn.textContent = "Guardando…";
+
+  const payload = {
+    first_name:  document.getElementById("edit_first_name").value.trim(),
+    last_name:   document.getElementById("edit_last_name").value.trim(),
+    bio:         document.getElementById("edit_bio").value.trim(),
+    department:  document.getElementById("edit_department").value.trim(),
+    position:    document.getElementById("edit_position").value.trim(),
+  };
+
+  try {
+    const res = await apiFetch("/users/me/", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok){
+      PROFILE_USER = await res.json();
+      renderProfile(PROFILE_USER);
+      closeEditModal();
+      showToast("Perfil actualizado ✓");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast("Error: " + JSON.stringify(err));
+    }
+  } catch(e){
+    showToast("Error de conexión");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Guardar";
+  }
+}
+
+/* ================= FOLLOW ================= */
+async function toggleFollow(username){
+  const btn = document.getElementById("followBtn");
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/users/${username}/follow/`, { method: "POST" });
+    if (!res.ok) return;
+    const data = await res.json();
+    btn.textContent = data.following ? "Siguiendo" : "Seguir";
+    if (PROFILE_USER) {
+      PROFILE_USER.followers_count = data.following
+        ? (PROFILE_USER.followers_count ?? 0) + 1
+        : Math.max(0, (PROFILE_USER.followers_count ?? 1) - 1);
+      renderProfile(PROFILE_USER);
+    }
+  } catch(err){
+    showToast("Error de conexión");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ================= POSTS ================= */
+async function loadProfilePosts(){
+  const el = document.getElementById("profilePosts");
+  el.innerHTML = `<div class="empty-state">Cargando publicaciones…</div>`;
+
+  try {
+    const username = targetUsername || CURRENT_USER?.username;
+    if (!username){
+      el.innerHTML = emptyState("No se pudo identificar el usuario");
+      return;
+    }
+
+    const res = await apiFetch(`/posts/?author=${encodeURIComponent(username)}`);
+    const data = await res.json();
+    const posts = data.results || data;
+
+    if (!posts.length){
+      el.innerHTML = emptyState("Sin publicaciones aún");
+      return;
+    }
+
+    el.innerHTML = posts.map(p => `
+      <article class="post-card">
+        ${avatarHTML(p.author, 40)}
+        <div class="post-main">
+          <div class="post-head">
+            <div>
+              <b>${escapeHTML(p.author?.first_name || "")} ${escapeHTML(p.author?.last_name || "")}</b>
+              <span class="post-username">@${escapeHTML(p.author?.username || "")}</span>
+            </div>
+            <span class="post-time">${timeAgo(p.created_at)}</span>
+          </div>
+          <div class="post-content">${escapeHTML(p.content)}</div>
+          ${p.image ? `<img src="${p.image}" class="post-image" alt="imagen">` : ""}
+          <div class="post-actions">
+            ❤ ${p.likes_count ?? 0} · 💬 ${p.comments_count ?? 0}
+          </div>
+        </div>
+      </article>
+    `).join("");
+
+  } catch(err){
+    el.innerHTML = emptyState("Error cargando publicaciones");
+  }
+}
+
+/* ================= NOTIF BADGE ================= */
+async function loadUnreadBadge(){
+  try {
+    const res = await apiFetch("/notifications/");
+    if (!res.ok) return;
+    const data = await res.json();
+    const unread = (data.results || data).filter(n => !n.is_read).length;
+    const badge = document.getElementById("notifBadge");
+    if (unread > 0){
+      badge.textContent = unread > 9 ? "9+" : unread;
+      badge.style.display = "inline-block";
+    }
+  } catch(err){}
+}
+
+/* ================= HELPERS ================= */
+function emptyState(text){
+  return `<div class="empty-state">${text}</div>`;
+}
+</script>
+
+</body>
+</html>
